@@ -8,6 +8,8 @@ import os
 import sys
 import logging
 import asyncio
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from telegram.ext import ApplicationBuilder
 
