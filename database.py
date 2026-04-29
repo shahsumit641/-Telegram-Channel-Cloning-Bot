@@ -33,18 +33,28 @@ async def init_db():
     
     # Initialize asyncpg connection pool for direct PostgreSQL access
     if not DATABASE_URL:
-        log.error("DATABASE_URL not set! Check your .env file.")
-        raise ValueError("DATABASE_URL is required")
+        log.error("❌ DATABASE_URL not set! Please configure it in Render environment.")
+        raise ValueError("DATABASE_URL is required. Set it in your Render service environment variables.")
+    
+    log.info(f"Connecting to database: {DATABASE_URL[:50]}...")  # Log first 50 chars (safe)
     
     # Use prepared_statements=False for Supabase's PgBouncer transaction mode
-    _pool = await asyncpg.create_pool(
-        DATABASE_URL,
-        min_size=2,
-        max_size=10,
-        command_timeout=60,
-        # Supabase PgBouncer transaction mode doesn't support prepared statements
-        # We'll use raw SQL without prepared statements
-    )
+    try:
+        _pool = await asyncpg.create_pool(
+            DATABASE_URL,
+            min_size=2,
+            max_size=10,
+            command_timeout=60,
+            # Supabase PgBouncer transaction mode doesn't support prepared statements
+            # We'll use raw SQL without prepared statements
+        )
+    except Exception as e:
+        log.error(f"❌ Failed to connect to database: {e}")
+        log.error("This usually means:")
+        log.error("  1. DATABASE_URL is not set or is invalid")
+        log.error("  2. Network cannot reach the database server")
+        log.error("  3. Database credentials are incorrect")
+        raise
     
     log.info("Database connection pool created")
     
