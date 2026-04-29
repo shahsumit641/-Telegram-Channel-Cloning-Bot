@@ -11,11 +11,12 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ── Set event loop policy for Python 3.14 compatibility ──
+# ── Create event loop before importing modules that use Pyrogram ──
+# This is required for Python 3.10+ to avoid "no current event loop" errors
 if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    asyncio.set_event_loop(asyncio.ProactorEventLoop())
 else:
-    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 from telegram.ext import ApplicationBuilder
 
