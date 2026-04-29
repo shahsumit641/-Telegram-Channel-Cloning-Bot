@@ -3,8 +3,8 @@ Manages per-user Pyrogram clients using string sessions stored in Supabase.
 Each user gets their own in-memory client.
 """
 
+from __future__ import annotations
 import logging
-from pyrogram import Client
 from database import get_user, update_string_session
 
 log = logging.getLogger("UserClient")
@@ -14,6 +14,7 @@ _active_clients = {}
 
 async def get_user_client(user_id: int) -> Client:
     """Get or create a Pyrogram client for a user."""
+    from pyrogram import Client
     
     if user_id in _active_clients:
         client = _active_clients[user_id]
