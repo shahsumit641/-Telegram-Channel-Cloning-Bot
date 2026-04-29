@@ -11,13 +11,33 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from telegram.ext import ApplicationBuilder
+# Ensure unbuffered output for Render
+sys.stdout.reconfigure(line_buffering=False) if hasattr(sys.stdout, 'reconfigure') else None
+sys.stderr.reconfigure(line_buffering=False) if hasattr(sys.stderr, 'reconfigure') else None
 
-from config import BOT_TOKEN, LOG_LEVEL, AUTO_FORWARD_INTERVAL
-from database import init_db, close_db
-from user_client import shutdown_all
-from clone_engine import AutoForwardEngine
-from handlers import register_handlers
+# Setup basic logging immediately
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True
+)
+
+print("🔧 Bot initializing...", flush=True)
+
+try:
+    from telegram.ext import ApplicationBuilder
+    from config import BOT_TOKEN, LOG_LEVEL, AUTO_FORWARD_INTERVAL
+    from database import init_db, close_db
+    from user_client import shutdown_all
+    from clone_engine import AutoForwardEngine
+    from handlers import register_handlers
+    print("✓ All modules imported successfully", flush=True)
+except Exception as e:
+    print(f"❌ Failed to import modules: {e}", flush=True)
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
 # ── Logging Setup ───────────────────────────────────────
 
@@ -127,20 +147,28 @@ async def main():
 # ── Entry Point ─────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Create event loop for Python 3.10+ compatibility with Pyrogram
-    if sys.platform == "win32":
-        loop = asyncio.ProactorEventLoop()
-    else:
-        loop = asyncio.new_event_loop()
-    
-    asyncio.set_event_loop(loop)
-    
+    print("🚀 Starting bot entry point...", flush=True)
     try:
-        loop.run_until_complete(main())
-    except KeyboardInterrupt:
-        log.info("Exiting...")
-    except RuntimeError as e:
-        log.error(f"Runtime error: {e}")
+        # Create event loop for Python 3.10+ compatibility with Pyrogram
+        if sys.platform == "win32":
+            loop = asyncio.ProactorEventLoop()
+        else:
+            loop = asyncio.new_event_loop()
+        
+        asyncio.set_event_loop(loop)
+        print("✓ Event loop created", flush=True)
+        
+        try:
+            loop.run_until_complete(main())
+        except KeyboardInterrupt:
+            log.info("Exiting...")
+        except RuntimeError as e:
+            log.error(f"Runtime error: {e}", exc_info=True)
+            sys.exit(1)
+        finally:
+            loop.close()
+    except Exception as e:
+        print(f"❌ Unhandled error in main: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
-    finally:
-        loop.close()
