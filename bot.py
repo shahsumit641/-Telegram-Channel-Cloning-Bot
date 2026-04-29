@@ -11,6 +11,12 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+# ── Set event loop policy for Python 3.14 compatibility ──
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+else:
+    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+
 from telegram.ext import ApplicationBuilder
 
 from config import BOT_TOKEN, LOG_LEVEL, AUTO_FORWARD_INTERVAL
