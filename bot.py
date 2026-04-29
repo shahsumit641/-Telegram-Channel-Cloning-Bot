@@ -43,8 +43,10 @@ class HealthHandler(BaseHTTPRequestHandler):
         return  # Suppress HTTP log noise
 
 def run_health_server():
-    server = HTTPServer(("0.0.0.0", 10000), HealthHandler)
-    log.info("Health server running on port 10000")
+    # Bind to PORT env var (set by Render) or default to 10000
+    port = int(os.getenv("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    log.info(f"Health server running on port {port}")
     server.serve_forever()
 
 # ── Startup ─────────────────────────────────────────────
@@ -58,6 +60,11 @@ async def main():
     log.info("=" * 50)
     log.info("Telegram Channel Cloner Bot starting up...")
     log.info("=" * 50)
+    
+    # Validate required environment variables
+    if not BOT_TOKEN:
+        log.error("❌ BOT_TOKEN not set! Please configure it in Render environment.")
+        sys.exit(1)
 
     # ── Start health check server in a background thread ──
     health_thread = threading.Thread(target=run_health_server, daemon=True)
@@ -65,22 +72,42 @@ async def main():
     log.info("Health check server thread started")
 
     # 1. Initialize database
-    await init_db()
+    try:
+        await init_db()
+    except Exception as e:
+        log.error(f"❌ Database initialization failed: {e}")
+        sys.exit(1)
 
     # 2. Build bot
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    try:
+        app = ApplicationBuilder().token(BOT_TOKEN).build()
+    except Exception as e:
+        log.error(f"❌ Failed to build bot application: {e}")
+        sys.exit(1)
     
     # 3. Register handlers
-    register_handlers(app)
+    try:
+        register_handlers(app)
+    except Exception as e:
+        log.error(f"❌ Failed to register handlers: {e}")
+        sys.exit(1)
     
     # 4. Start auto-forward engine
-    auto_engine = AutoForwardEngine(check_interval=AUTO_FORWARD_INTERVAL)
-    await auto_engine.start()
+    try:
+        auto_engine = AutoForwardEngine(check_interval=AUTO_FORWARD_INTERVAL)
+        await auto_engine.start()
+    except Exception as e:
+        log.error(f"❌ Failed to start auto-forward engine: {e}")
+        sys.exit(1)
     
     # 5. Start bot
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
+    try:
+        await app.initialize()
+        await app.start()
+        await app.updater.start_polling()
+    except Exception as e:
+        log.error(f"❌ Failed to start bot: {e}")
+        sys.exit(1)
     
     log.info("✅ Bot is LIVE! (Render will not sleep — UptimeRobot pings every 5 min)")
     
