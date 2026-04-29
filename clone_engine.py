@@ -3,13 +3,10 @@ Core cloning engine.
 Handles historical clone and auto-forward with no 'Forwarded from' tag.
 """
 
+from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
-
-from pyrogram import Client
-from pyrogram.errors import FloodWait, ChatWriteForbidden, ChannelPrivate, PeerIdInvalid
-from pyrogram.types import Message
 
 from database import (
     update_job_state, get_user_job, create_auto_forward,
@@ -27,6 +24,8 @@ async def _safe_copy(client: Client, from_chat, to_chat, msg_id, retries=3):
     Copy a single message.
     Uses copy_message() which does NOT add "Forwarded from" tag.
     """
+    from pyrogram.errors import FloodWait, ChatWriteForbidden, ChannelPrivate, PeerIdInvalid
+    
     for attempt in range(retries):
         try:
             return await client.copy_message(
@@ -54,6 +53,8 @@ async def _safe_copy(client: Client, from_chat, to_chat, msg_id, retries=3):
 
 async def _safe_copy_media_group(client: Client, from_chat, to_chat, msg_id, retries=3):
     """Copy a media group (album) without forward tag."""
+    from pyrogram.errors import FloodWait, ChatWriteForbidden, ChannelPrivate, PeerIdInvalid
+    
     for attempt in range(retries):
         try:
             return await client.copy_media_group(
@@ -93,6 +94,8 @@ async def run_historical_clone(
       on_progress(user_id, job_id, current, total, percent)
       on_complete(user_id, job_id, total_cloned, error_message)
     """
+    from pyrogram.errors import FloodWait, ChatWriteForbidden, ChannelPrivate, PeerIdInvalid
+    
     log.info(f"[User {user_id}] Starting historical clone job #{job_id}")
     
     # Get the Pyrogram client for this user
@@ -349,6 +352,9 @@ class AutoForwardEngine:
     
     async def _check_single(self, cfg: dict):
         """Check a single auto-forward config for new messages."""
+        from pyrogram.errors import ChatWriteForbidden
+        from pyrogram.types import Message
+        
         user_id = cfg["user_id"]
         source = cfg["source_channel"]
         dest = cfg["dest_channel"]
