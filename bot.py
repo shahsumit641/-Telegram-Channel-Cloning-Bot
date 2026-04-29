@@ -11,13 +11,6 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# ── Create event loop before importing modules that use Pyrogram ──
-# This is required for Python 3.10+ to avoid "no current event loop" errors
-if sys.platform == "win32":
-    asyncio.set_event_loop(asyncio.ProactorEventLoop())
-else:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
 from telegram.ext import ApplicationBuilder
 
 from config import BOT_TOKEN, LOG_LEVEL, AUTO_FORWARD_INTERVAL
@@ -107,10 +100,20 @@ async def main():
 # ── Entry Point ─────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Create event loop for Python 3.10+ compatibility with Pyrogram
+    if sys.platform == "win32":
+        loop = asyncio.ProactorEventLoop()
+    else:
+        loop = asyncio.new_event_loop()
+    
+    asyncio.set_event_loop(loop)
+    
     try:
-        asyncio.run(main())
+        loop.run_until_complete(main())
     except KeyboardInterrupt:
         log.info("Exiting...")
     except RuntimeError as e:
         log.error(f"Runtime error: {e}")
         sys.exit(1)
+    finally:
+        loop.close()
