@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from pyrogram import Client
 
 from database import (
     update_job_state, get_user_job, create_auto_forward,
@@ -16,6 +17,27 @@ from database import (
 from user_client import get_user_client
 
 log = logging.getLogger("CloneEngine")
+
+
+async def resolve_chat(client, chat_input):
+    """
+    Resolve chat from:
+    - @username
+    - -100chat_id (private/public)
+    """
+
+    # 1. Try direct resolution (works for usernames)
+    try:
+        return await client.get_chat(chat_input)
+    except Exception:
+        pass
+
+    # 2. Fallback: scan dialogs (required for private IDs)
+    async for dialog in client.get_dialogs():
+        if str(dialog.chat.id) == str(chat_input):
+            return dialog.chat
+
+    raise ValueError(f"Cannot resolve chat: {chat_input}")
 
 # ── Rate-limited copy helpers ───────────────────────────
 
@@ -124,9 +146,21 @@ async def run_historical_clone(
     total_cloned = job["total_cloned"]
     
     # Resolve channels
+    # Resolve channels (supports username + private ID)
     try:
-        source_chat = await client.get_chat(source)
-        dest_chat = await client.get_chat(dest)
+        # 🔥 load dialogs FIRST (IMPORTANT)
+        async for _ in client.get_dialogs(limit=50):
+            break
+        
+        # 🔥 resolve
+        source_chat = await resolve_chat(client, source)
+        dest_chat = await resolve_chat(client, dest)
+        
+        # 🔥 convert to usable ID
+        source = source_chat.id
+        dest = dest_chat.id
+
+        label = f"{source_chat.title or source} → {dest_chat.title or dest}"
     except ChannelPrivate:
         msg = f"Source channel '{source}' is private or bot cannot access it"
         log.error(f"[User {user_id}] {msg}")
@@ -147,18 +181,19 @@ async def run_historical_clone(
         await update_job_state(job_id, status="failed")
         if on_complete:
             await on_complete(user_id, job_id, 0, msg)
-        return
-    
-    source_id = source_chat.id
-    dest_id = dest_chat.id
-    label = f"{source_chat.title or source} → {dest_chat.title or dest}"
+        return    
     
     await update_job_state(job_id, status="running")
     
     # Get message range
     try:
-        first_msg = await client.get_messages(source_id, 1)
-        latest_msg = await client.get_messages(source_id, 0)
+        first_msg = await client.get_messages(source, 1)
+
+        latest_list = []
+        async for m in client.get_chat_history(source, limit=1):
+            latest_list.append(m)
+
+        latest_msg = latest_list[0] if latest_list else None
         first_id = first_msg.id if first_msg else 1
         latest_id = latest_msg.id if latest_msg else 0
         
@@ -184,11 +219,16 @@ async def run_historical_clone(
         current_id = last_cloned + 1 if last_cloned > 0 else first_id
         
         while current_id <= latest_id:
+
+            job = await get_user_job(user_id, job_id)
+            if not job or job.get("status") in ["deleted", "failed", "complete"]:
+                log.info(f"Job {job_id} stopped")
+                return
             batch_end = min(current_id + 99, latest_id)
             msg_ids = list(range(current_id, batch_end + 1))
             
             try:
-                messages = await client.get_messages(source_id, msg_ids)
+                messages = await client.get_messages(source, msg_ids)
             except FloodWait as e:
                 await asyncio.sleep(e.value + 2)
                 continue
@@ -198,6 +238,9 @@ async def run_historical_clone(
                 continue
             
             for msg in messages:
+                if getattr(msg, "service", False):
+                    continue
+
                 if msg is None or msg.empty:
                     continue
                 
@@ -209,9 +252,13 @@ async def run_historical_clone(
                         if msg.media_group_id in seen_media_groups:
                             continue
                         seen_media_groups.add(msg.media_group_id)
-                        await _safe_copy_media_group(client, source_id, dest_id, msg.id)
+                        await _safe_copy_media_group(client, source, dest, msg.id)
                     else:
-                        await _safe_copy(client, source_id, dest_id, msg.id)
+                        from pyrogram.errors import FloodWait
+                        try:
+                            await _safe_copy(client, source, dest, msg.id)
+                        except FloodWait as e:
+                            await asyncio.sleep(e.value)
                     
                     processed += 1
                     
@@ -241,10 +288,16 @@ async def run_historical_clone(
         while True:
             try:
                 batch_count = 0
-                async for msg in client.get_chat_history(source_id, limit=100, offset_id=offset_id):
+                async for msg in client.get_chat_history(source, limit=100, offset_id=offset_id):
+
+                    # 🔥 ADD HERE
+                    job = await get_user_job(user_id, job_id)
+                    if not job or job.get("status") == "deleted":
+                        log.info(f"Job {job_id} stopped")
+                        return
                     if msg.id <= last_cloned:
                         log.info(f"[User {user_id}] Reached already-cloned msg {msg.id}, stopping")
-                        return
+                        continue
                     
                     if only_media and not msg.media and not msg.media_group_id:
                         continue
@@ -254,9 +307,13 @@ async def run_historical_clone(
                             if msg.media_group_id in seen_media_groups:
                                 continue
                             seen_media_groups.add(msg.media_group_id)
-                            await _safe_copy_media_group(client, source_id, dest_id, msg.id)
+                            await _safe_copy_media_group(client, source, dest, msg.id)
                         else:
-                            await _safe_copy(client, source_id, dest_id, msg.id)
+                            try:
+                                from pyrogram.errors import FloodWait
+                                await _safe_copy(client, source, dest, msg.id)
+                            except FloodWait as e:
+                                await asyncio.sleep(e.value)
                         
                         processed += 1
                         batch_count += 1
@@ -334,7 +391,7 @@ class AutoForwardEngine:
                 await self._check_all()
             except Exception as e:
                 log.error(f"Auto-forward poll error: {e}", exc_info=True)
-            await asyncio.sleep(self.check_interval)
+            await asyncio.sleep(max(self.check_interval, 3))
     
     async def _check_all(self):
         """Check all active auto-forward configs for new messages."""
@@ -346,73 +403,118 @@ class AutoForwardEngine:
         
         for cfg in configs:
             try:
-                await self._check_single(cfg)
+                try:
+                    await self._check_single(cfg)
+                except Exception as e:
+                    log.error(f"Auto-forward crash protected: {e}")
             except Exception as e:
                 log.error(f"Auto-forward check failed for config #{cfg['id']}: {e}")
     
     async def _check_single(self, cfg: dict):
         """Check a single auto-forward config for new messages."""
-        from pyrogram.errors import ChatWriteForbidden
+        from pyrogram.errors import ChatWriteForbidden, ChannelPrivate
         from pyrogram.types import Message
-        
+
         user_id = cfg["user_id"]
         source = cfg["source_channel"]
         dest = cfg["dest_channel"]
         last_msg_id = cfg["last_msg_id"]
         af_id = cfg["id"]
-        
+
         # Get the user's Pyrogram client
         try:
             client = await get_user_client(user_id)
         except ValueError:
-            # User hasn't set up their API — skip this one
             log.debug(f"Auto-forward #{af_id}: user {user_id} not ready, skipping")
             return
         except Exception as e:
-            log.error(f"Auto-forward #{af_id}: failed to get client for user {user_id}: {e}")
+            log.error(f"Auto-forward #{af_id}: failed to get client: {e}")
             return
-        
+
         try:
-            latest = await client.get_messages(source, 0)
+            # 🔥 CRITICAL FIX: resolve chats (works for private channels + IDs)
+            async for _ in client.get_dialogs(limit=50):
+                break
+
+            source_chat = await resolve_chat(client, source)
+            dest_chat = await resolve_chat(client, dest)
+
+            source = source_chat.id
+            dest = dest_chat.id
+
+            # 🔍 Get latest message
+            latest_list = []
+            async for m in client.get_chat_history(source, limit=1):
+                latest_list.append(m)
+
+            latest = latest_list[0] if latest_list else None
             if latest is None or latest.empty:
                 return
-            
+
+            # 🚀 New messages found
             if latest.id > last_msg_id:
-                log.info(f"Auto-forward #{af_id}: new messages detected ({last_msg_id+1} → {latest.id})")
-                
+                log.info(
+                    f"Auto-forward #{af_id}: new messages ({last_msg_id+1} → {latest.id})"
+                )
+
                 current = last_msg_id + 1
+
                 while current <= latest.id:
                     batch_end = min(current + 50, latest.id)
                     msg_ids = list(range(current, batch_end + 1))
-                    
+
                     try:
                         messages = await client.get_messages(source, msg_ids)
                     except Exception:
                         current = batch_end + 1
                         continue
-                    
+
                     seen_media = set()
+
                     for msg in messages:
+
+                        if getattr(msg, "service", False):
+                            continue
+
                         if msg is None or msg.empty:
                             continue
-                        
+
                         try:
                             if msg.media_group_id:
                                 if msg.media_group_id in seen_media:
                                     continue
                                 seen_media.add(msg.media_group_id)
-                                await _safe_copy_media_group(client, source, dest, msg.id)
+
+                                await _safe_copy_media_group(
+                                    client, source, dest, msg.id
+                                )
                             else:
                                 await _safe_copy(client, source, dest, msg.id)
+
+                        except ChatWriteForbidden:
+                            log.error(
+                                f"Auto-forward #{af_id}: bot cannot write to destination {dest}"
+                            )
+                            return
+
                         except Exception as e:
-                            log.error(f"Auto-forward #{af_id}: copy error msg {msg.id}: {e}")
+                            log.error(
+                                f"Auto-forward #{af_id}: copy error msg {msg.id}: {e}"
+                            )
                             continue
-                    
-                    await update_auto_forward_last_msg(af_id, batch_end)
+
+                    # ✅ update only after successful batch
+                    if batch_end > last_msg_id:
+                        await update_auto_forward_last_msg(af_id, batch_end)
+                        last_msg_id = batch_end
                     current = batch_end + 1
+
                     await asyncio.sleep(1)
-                    
+
         except ChannelPrivate:
-            log.warning(f"Auto-forward #{af_id}: source channel '{source}' no longer accessible")
+            log.warning(
+                f"Auto-forward #{af_id}: source '{source}' not accessible (left or banned)"
+            )
+
         except Exception as e:
             log.error(f"Auto-forward #{af_id}: check error: {e}")
