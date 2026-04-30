@@ -55,18 +55,15 @@ log = logging.getLogger("Bot")
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
         self.end_headers()
         self.wfile.write(b"OK")
-    
+
     def log_message(self, format, *args):
-        return  # Suppress HTTP log noise
+        return  # suppress logs
 
 def run_health_server():
-    # Bind to PORT env var (set by Render) or default to 10000
-    port = int(os.getenv("PORT", "10000"))
+    port = int(os.getenv("PORT", 10000))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    log.info(f"Health server running on port {port}")
     server.serve_forever()
 
 # ── Startup ─────────────────────────────────────────────
@@ -85,9 +82,7 @@ def main():
     log.info("Health check server thread started")
 
     # DB (fixed)
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(init_db())
+    asyncio.run(init_db())
 
     auto_engine = AutoForwardEngine(check_interval=AUTO_FORWARD_INTERVAL)
 
@@ -98,7 +93,12 @@ def main():
 
     register_handlers(app)
 
-    app.run_polling()
+    try:
+        app.run_polling()
+    finally:
+        asyncio.run(auto_engine.stop())
+        asyncio.run(shutdown_all())
+        asyncio.run(close_db())
 
 
 # ── Entry Point ─────────────────────────────────────────
