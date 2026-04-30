@@ -69,6 +69,9 @@ def run_health_server():
 # ── Startup ─────────────────────────────────────────────
 
 def main():
+    threading.Thread(target=run_health_server, daemon=True).start()
+    log.info("Health check server thread started")
+
     log.info("=" * 50)
     log.info("Telegram Channel Cloner Bot starting up...")
     log.info("=" * 50)
@@ -76,10 +79,6 @@ def main():
     if not BOT_TOKEN:
         log.error("❌ BOT_TOKEN not set!")
         sys.exit(1)
-
-    # Health server
-    threading.Thread(target=run_health_server, daemon=True).start()
-    log.info("Health check server thread started")
 
     # DB (fixed)
     loop = asyncio.new_event_loop()
