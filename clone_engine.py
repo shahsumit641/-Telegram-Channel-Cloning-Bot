@@ -139,6 +139,8 @@ async def run_historical_clone(
     
     source = job["source_channel"]
     dest = job["dest_channel"]
+    source_thread_id = job.get("source_thread_id")
+    dest_thread_id = job.get("dest_thread_id")
     direction = job["direction"]
     delay = job["delay"]
     only_media = bool(job["only_media"])
@@ -238,6 +240,11 @@ async def run_historical_clone(
                 continue
             
             for msg in messages:
+                # 🔥 TOPIC FILTER
+                if source_thread_id is not None:
+                    if msg.message_thread_id != source_thread_id:
+                        continue
+
                 if getattr(msg, "service", False):
                     continue
 
@@ -252,11 +259,21 @@ async def run_historical_clone(
                         if msg.media_group_id in seen_media_groups:
                             continue
                         seen_media_groups.add(msg.media_group_id)
-                        await _safe_copy_media_group(client, source, dest, msg.id)
+                        await client.copy_media_group(
+                            chat_id=dest,
+                            from_chat_id=source,
+                            message_id=msg.id,
+                            message_thread_id=dest_thread_id
+                        )
                     else:
                         from pyrogram.errors import FloodWait
                         try:
-                            await _safe_copy(client, source, dest, msg.id)
+                            await client.copy_message(
+                                chat_id=dest,
+                                from_chat_id=source,
+                                message_id=msg.id,
+                                message_thread_id=dest_thread_id
+                            )
                         except FloodWait as e:
                             await asyncio.sleep(e.value)
                     
@@ -290,6 +307,10 @@ async def run_historical_clone(
                 batch_count = 0
                 async for msg in client.get_chat_history(source, limit=100, offset_id=offset_id):
 
+                    if source_thread_id is not None:
+                        if msg.message_thread_id != source_thread_id:
+                            continue
+
                     # 🔥 ADD HERE
                     job = await get_user_job(user_id, job_id)
                     if not job or job.get("status") == "deleted":
@@ -307,11 +328,21 @@ async def run_historical_clone(
                             if msg.media_group_id in seen_media_groups:
                                 continue
                             seen_media_groups.add(msg.media_group_id)
-                            await _safe_copy_media_group(client, source, dest, msg.id)
+                            await client.copy_media_group(
+                                chat_id=dest,
+                                from_chat_id=source,
+                                message_id=msg.id,
+                                message_thread_id=dest_thread_id
+                            )
                         else:
                             try:
                                 from pyrogram.errors import FloodWait
-                                await _safe_copy(client, source, dest, msg.id)
+                                await client.copy_message(
+                                    chat_id=dest,
+                                    from_chat_id=source,
+                                    message_id=msg.id,
+                                    message_thread_id=dest_thread_id
+                                )
                             except FloodWait as e:
                                 await asyncio.sleep(e.value)
                         
@@ -348,7 +379,13 @@ async def run_historical_clone(
     
     # If auto-forward was requested, register it
     if job["auto_forward"]:
-        await create_auto_forward(user_id, source, dest)
+        await create_auto_forward(
+            user_id,
+            source,
+            dest,
+            source_thread_id=source_thread_id,
+            dest_thread_id=dest_thread_id
+        )
         log.info(f"[User {user_id}] Auto-forward enabled: {source} → {dest}")
     
     if on_complete:
@@ -420,6 +457,8 @@ class AutoForwardEngine:
         dest = cfg["dest_channel"]
         last_msg_id = cfg["last_msg_id"]
         af_id = cfg["id"]
+        source_thread_id = cfg.get("source_thread_id")
+        dest_thread_id = cfg.get("dest_thread_id")
 
         # Get the user's Pyrogram client
         try:
@@ -443,11 +482,9 @@ class AutoForwardEngine:
             dest = dest_chat.id
 
             # 🔍 Get latest message
-            latest_list = []
-            async for m in client.get_chat_history(source, limit=1):
-                latest_list.append(m)
+            latest_msgs = await client.get_messages(source, limit=1)
+            latest = latest_msgs[0] if latest_msgs else None
 
-            latest = latest_list[0] if latest_list else None
             if latest is None or latest.empty:
                 return
 
@@ -473,6 +510,11 @@ class AutoForwardEngine:
 
                     for msg in messages:
 
+                        # 🔥 TOPIC FILTER
+                        if source_thread_id is not None:
+                            if msg.message_thread_id != source_thread_id:
+                                continue
+
                         if getattr(msg, "service", False):
                             continue
 
@@ -485,11 +527,19 @@ class AutoForwardEngine:
                                     continue
                                 seen_media.add(msg.media_group_id)
 
-                                await _safe_copy_media_group(
-                                    client, source, dest, msg.id
+                                await client.copy_media_group(
+                                    chat_id=dest,
+                                    from_chat_id=source,
+                                    message_id=msg.id,
+                                    message_thread_id=dest_thread_id
                                 )
                             else:
-                                await _safe_copy(client, source, dest, msg.id)
+                                await client.copy_message(
+                                    chat_id=dest,
+                                    from_chat_id=source,
+                                    message_id=msg.id,
+                                    message_thread_id=dest_thread_id
+                                )
 
                         except ChatWriteForbidden:
                             log.error(
