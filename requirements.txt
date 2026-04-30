@@ -1,5 +1,6 @@
 pyrogram==2.0.106
 tgcrypto
 python-telegram-bot==21.10
+python-dotenv
 httpx
 supabase
