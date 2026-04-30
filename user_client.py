@@ -12,62 +12,46 @@ log = logging.getLogger("UserClient")
 # Pool of active Pyrogram clients: {user_id: Client}
 _active_clients = {}
 
-async def get_user_client(user_id: int) -> Client:
-    """Get or create a Pyrogram client for a user."""
+async def get_user_client(user_id: int):
     from pyrogram import Client
-    
+
     if user_id in _active_clients:
         client = _active_clients[user_id]
         try:
-            me = await client.get_me()
-            if me:
-                return client
+            await client.get_me()
+            return client
         except Exception:
-            # Session expired, remove and recreate
             del _active_clients[user_id]
             log.info(f"User {user_id} session expired, reconnecting...")
-    
+
     user_data = await get_user(user_id)
     if not user_data:
         raise ValueError(
             f"User {user_id} has not registered API credentials. Use /setup first."
         )
-    
+
     api_id = user_data["api_id"]
     api_hash = user_data["api_hash"]
     string_session = user_data.get("string_session")
-    
-    session_name = f"user_{user_id}"
-    
-    if string_session:
-        client = Client(
-            session_name,
-            api_id=api_id,
-            api_hash=api_hash,
-            session_string=string_session,
-            in_memory=True
-        )
-        log.info(f"User {user_id}: restoring from saved string session")
-    else:
-        client = Client(
-            session_name,
-            api_id=api_id,
-            api_hash=api_hash,
-            in_memory=True
-        )
-        log.info(f"User {user_id}: first-time session creation")
-    
-    await client.start()
-    
-    # Save string session on first login
+
     if not string_session:
-        try:
-            new_session = await client.export_session_string()
-            await update_string_session(user_id, new_session)
-            log.info(f"User {user_id}: string session saved to database")
-        except Exception as e:
-            log.warning(f"User {user_id}: could not export session string: {e}")
-    
+        raise ValueError(
+            "Session not found. You must complete login (phone + OTP) first."
+        )
+
+    # ✅ FINAL CORRECT CLIENT
+    client = Client(
+        name=f"user_{user_id}",
+        api_id=api_id,
+        api_hash=api_hash,
+        session_string=string_session,
+        no_updates=True  # ⚠️ important for background worker stability
+    )
+
+    await client.start()
+
+    log.info(f"User {user_id}: connected using saved session")
+
     _active_clients[user_id] = client
     return client
 
