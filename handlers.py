@@ -6,6 +6,7 @@ ConversationHandler for multi-step flows (setup, clone creation).
 import logging
 import asyncio
 from datetime import datetime
+from telegram import Update
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -21,13 +22,17 @@ from database import (
 from clone_engine import run_historical_clone
 from user_client import get_user_client, remove_user_client
 
+from pyrogram import Client
+from pyrogram.errors import SessionPasswordNeeded
+from database import update_string_session
+
 log = logging.getLogger("Handlers")
 
 # ── Conversation States ─────────────────────────────────
-(SETUP_API_ID, SETUP_API_HASH, 
+(SETUP_API_ID, SETUP_API_HASH, ASK_PHONE, ASK_OTP, ASK_PASSWORD,
  CLONE_SOURCE, CLONE_DEST, CLONE_DIRECTION, CLONE_DELAY, 
  CLONE_MEDIA_ONLY, CLONE_AUTO_FORWARD,
- CONFIRM_CLONE) = range(9)
+ CONFIRM_CLONE) = range(12)
 
 # ── Helper Functions ────────────────────────────────────
 
@@ -174,27 +179,97 @@ async def setup_api_hash(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return SETUP_API_HASH
     
     await save_user(update.effective_user.id, api_id, api_hash)
-    
-    # Test connection
+
+    await update.message.reply_text(
+        "📱 Send your phone number (with country code)\nExample: +97798XXXXXXXX"
+    )
+
+    return ASK_PHONE
+
+
+async def handle_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    phone = update.message.text.strip()
+
+    user_data = await get_user(user_id)
+
+    client = Client(
+        name=f"user_{user_id}",
+        api_id=user_data["api_id"],
+        api_hash=user_data["api_hash"],
+        in_memory=True
+    )
+
+    await client.connect()
+
+    sent_code = await client.send_code(phone)
+
+    context.user_data["temp_client"] = client
+    context.user_data["phone_data"] = (phone, sent_code.phone_code_hash)
+
+    await update.message.reply_text("📩 Enter the OTP sent to your Telegram")
+
+    return ASK_OTP
+
+
+async def handle_otp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    code = update.message.text.strip()
+
+    client = context.user_data.get("temp_client")
+    phone_data = context.user_data.get("phone_data")
+
+    if not client or not phone_data:
+        await update.message.reply_text("❌ Session expired. Run /setup again.")
+        return ConversationHandler.END
+
+    phone, phone_code_hash = phone_data
+
     try:
-        client = await get_user_client(update.effective_user.id)
-        me = await client.get_me()
-        await update.message.reply_text(
-            f"✅ **Setup complete!**\n\n"
-            f"Logged in as: @{me.username or me.first_name}\n"
-            f"Session saved to database — no re-login needed.\n\n"
-            f"Ready to clone! Use `/clone` or tap 'New Clone Job'.",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        await update.message.reply_text(
-            "⚠️ **Credentials saved** but session connection failed.\n"
-            f"Error: `{e}`\n\n"
-            "Make sure your API ID and Hash are correct.",
-            parse_mode="Markdown"
-        )
-    
-    context.user_data.pop("setup_api_id", None)
+        await client.sign_in(phone, phone_code_hash, code)
+    except SessionPasswordNeeded:
+        context.user_data["awaiting_password"] = True
+        await update.message.reply_text("🔐 Enter your 2FA password")
+        return ASK_PASSWORD
+
+    session_string = await client.export_session_string()
+
+    await update_string_session(user_id, session_string)
+
+    await client.disconnect()
+
+    context.user_data.pop("temp_client", None)
+    context.user_data.pop("phone_data", None)
+
+    await update.message.reply_text("✅ Login successful! Setup complete.")
+
+    return ConversationHandler.END
+
+async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    password = update.message.text.strip()
+
+    client = context.user_data.get("temp_client")
+
+    if not client:
+        await update.message.reply_text("❌ Session expired. Run /setup again.")
+        return ConversationHandler.END
+
+    try:
+        await client.check_password(password)
+    except Exception:
+        await update.message.reply_text("❌ Wrong password. Try again.")
+        return ASK_PASSWORD
+
+    session_string = await client.export_session_string()
+    await update_string_session(user_id, session_string)
+
+    await client.disconnect()
+
+    context.user_data.clear()
+
+    await update.message.reply_text("✅ Login successful! Setup complete.")
+
     return ConversationHandler.END
 
 # ── New Clone Job ───────────────────────────────────────
@@ -564,6 +639,9 @@ def register_handlers(app: Application):
         states={
             SETUP_API_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, setup_api_id)],
             SETUP_API_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, setup_api_hash)],
+            ASK_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_phone)],
+            ASK_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_otp)],
+            ASK_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_password)],
         },
         fallbacks=[CommandHandler("cancel", cancel_command)],
         allow_reentry=True,
