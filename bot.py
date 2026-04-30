@@ -82,7 +82,9 @@ def main():
     log.info("Health check server thread started")
 
     # DB (fixed)
-    asyncio.run(init_db())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(init_db())
 
     auto_engine = AutoForwardEngine(check_interval=AUTO_FORWARD_INTERVAL)
 
