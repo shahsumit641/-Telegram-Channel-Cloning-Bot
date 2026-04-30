@@ -77,13 +77,19 @@ async def delete_user(user_id: int):
 # ── Clone job operations ────────────────────────────
 
 async def create_clone_job(
-    user_id: int, source: str, dest: str,
-    direction: str = "oldest", delay: float = 1.0,
-    only_media: bool = False, auto_forward: bool = False
+    user_id: int,
+    source: str,
+    dest: str,
+    direction: str = "oldest",
+    delay: float = 1.0,
+    only_media: bool = False,
+    auto_forward: bool = False,
+    source_thread_id: int = None,
+    dest_thread_id: int = None
 ) -> int:
     supabase = get_supabase()
 
-    res = supabase.table("clone_jobs").insert({
+    data = {
         "user_id": user_id,
         "source_channel": source,
         "dest_channel": dest,
@@ -91,8 +97,12 @@ async def create_clone_job(
         "delay": delay,
         "only_media": int(only_media),
         "auto_forward": int(auto_forward),
-        "status": "idle"
-    }).execute()
+        "status": "idle",
+        "source_thread_id": source_thread_id,
+        "dest_thread_id": dest_thread_id
+    }
+
+    res = supabase.table("clone_jobs").insert(data).execute()
 
     job_id = res.data[0]["id"]
     log.info(f"Clone job #{job_id} created")
@@ -150,13 +160,21 @@ async def delete_job(job_id: int, user_id: int):
 
 # ── Auto-forward operations ─────────────────────────
 
-async def create_auto_forward(user_id: int, source: str, dest: str):
+async def create_auto_forward(
+    user_id: int,
+    source: str,
+    dest: str,
+    source_thread_id: int = None,
+    dest_thread_id: int = None
+):
     supabase = get_supabase()
 
     supabase.table("auto_forwards").upsert({
         "user_id": user_id,
         "source_channel": source,
         "dest_channel": dest,
+        "source_thread_id": source_thread_id,
+        "dest_thread_id": dest_thread_id,
         "active": 1,
         "last_msg_id": 0
     }).execute()
