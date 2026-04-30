@@ -5,6 +5,7 @@ ConversationHandler for multi-step flows (setup, clone creation).
 
 import logging
 import asyncio
+import re
 from datetime import datetime
 from telegram import Update
 
@@ -35,6 +36,23 @@ log = logging.getLogger("Handlers")
  CONFIRM_CLONE) = range(12)
 
 # ── Helper Functions ────────────────────────────────────
+
+def parse_t_me_c_link(link: str):
+    match = re.search(r"t\.me/c/(\d+)/(\d+)", link)
+    if not match:
+        return None, None
+
+    internal_id = match.group(1)
+    message_id = int(match.group(2))
+
+    chat_id = int(f"-100{internal_id}")
+
+    return chat_id, message_id
+
+
+async def extract_thread_id(client, chat_id: int, message_id: int):
+    msg = await client.get_messages(chat_id, message_id)
+    return msg.message_thread_id
 
 def main_menu_keyboard():
     """Build the interactive main menu."""
@@ -307,38 +325,81 @@ async def new_clone_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CLONE_SOURCE
 
 async def clone_source(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive source channel."""
-    source = update.message.text.strip()
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+
+    chat_id, message_id = parse_t_me_c_link(text)
+
+    thread_id = None
+    source = text
+
+    if chat_id and message_id:
+        try:
+            client = await get_user_client(user_id)
+
+            thread_id = await extract_thread_id(client, chat_id, message_id)
+
+            source = chat_id
+
+            await update.message.reply_text(
+                f"✅ Topic detected\nChat ID: `{chat_id}`\nThread ID: `{thread_id}`",
+                parse_mode="Markdown"
+            )
+
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+            return CLONE_SOURCE
+
     context.user_data["clone_source"] = source
-    
+    context.user_data["source_thread_id"] = thread_id
+
     await update.message.reply_text(
-        f"✅ Source: `{source}`\n\n"
-        "**Step 2/7** — **Destination channel**?\n"
-        "(Channel to clone INTO)\n\n"
-        "Send the username (`@channel`) or chat ID:\n"
-        "_(or type /cancel)_",
+        f"✅ Source: `{source}`\n\nSend destination channel or topic link:",
         parse_mode="Markdown"
     )
+
     return CLONE_DEST
 
 async def clone_dest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive destination channel."""
-    dest = update.message.text.strip()
+    text = update.message.text.strip()
+    user_id = update.effective_user.id
+
+    chat_id, message_id = parse_t_me_c_link(text)
+
+    thread_id = None
+    dest = text
+
+    if chat_id and message_id:
+        try:
+            client = await get_user_client(user_id)
+
+            thread_id = await extract_thread_id(client, chat_id, message_id)
+
+            dest = chat_id
+
+            await update.message.reply_text(
+                f"✅ Destination topic detected\nChat ID: `{chat_id}`\nThread ID: `{thread_id}`",
+                parse_mode="Markdown"
+            )
+
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+            return CLONE_DEST
+
     context.user_data["clone_dest"] = dest
-    
+    context.user_data["dest_thread_id"] = thread_id
+
     keyboard = [
-        [InlineKeyboardButton("📅 Oldest (chronological)", callback_data="dir_oldest")],
-        [InlineKeyboardButton("🕐 Newest (recent first)", callback_data="dir_newest")],
+        [InlineKeyboardButton("📅 Oldest", callback_data="dir_oldest")],
+        [InlineKeyboardButton("🕐 Newest", callback_data="dir_newest")],
     ]
-    
+
     await update.message.reply_text(
-        f"✅ Destination: `{dest}`\n\n"
-        "**Step 3/7** — **Clone direction?**\n\n"
-        "• **Oldest** — Original order (recommended)\n"
-        "• **Newest** — Recent messages first",
+        f"✅ Destination: `{dest}`\n\nChoose direction:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
+
     return CLONE_DIRECTION
 
 async def clone_direction(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -465,7 +526,15 @@ async def clone_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     auto_forward = s.get("clone_auto_forward", False)
     
     job_id = await create_clone_job(
-        user_id, source, dest, direction, delay, only_media, auto_forward
+        user_id,
+        source,
+        dest,
+        direction,
+        delay,
+        only_media,
+        auto_forward,
+        source_thread_id=context.user_data.get("source_thread_id"),
+        dest_thread_id=context.user_data.get("dest_thread_id"),
     )
     
     await query.message.reply_text(
