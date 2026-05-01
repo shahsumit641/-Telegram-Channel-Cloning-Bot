@@ -242,7 +242,7 @@ async def run_historical_clone(
             for msg in messages:
                 # 🔥 TOPIC FILTER
                 if source_thread_id is not None:
-                    if msg.message_thread_id != source_thread_id:
+                    if getattr(msg, "message_thread_id", None) != source_thread_id:
                         continue
 
                 if getattr(msg, "service", False):
@@ -263,7 +263,7 @@ async def run_historical_clone(
                             chat_id=dest,
                             from_chat_id=source,
                             message_id=msg.id,
-                            message_thread_id=dest_thread_id
+                            **({"message_thread_id": dest_thread_id} if dest_thread_id else {})
                         )
                     else:
                         from pyrogram.errors import FloodWait
@@ -272,7 +272,7 @@ async def run_historical_clone(
                                 chat_id=dest,
                                 from_chat_id=source,
                                 message_id=msg.id,
-                                message_thread_id=dest_thread_id
+                                **({"message_thread_id": dest_thread_id} if dest_thread_id else {})
                             )
                         except FloodWait as e:
                             await asyncio.sleep(e.value)
@@ -308,7 +308,7 @@ async def run_historical_clone(
                 async for msg in client.get_chat_history(source, limit=100, offset_id=offset_id):
 
                     if source_thread_id is not None:
-                        if msg.message_thread_id != source_thread_id:
+                        if getattr(msg, "message_thread_id", None) != source_thread_id:
                             continue
 
                     # 🔥 ADD HERE
@@ -332,7 +332,7 @@ async def run_historical_clone(
                                 chat_id=dest,
                                 from_chat_id=source,
                                 message_id=msg.id,
-                                message_thread_id=dest_thread_id
+                                **({"message_thread_id": dest_thread_id} if dest_thread_id else {})
                             )
                         else:
                             try:
@@ -341,7 +341,7 @@ async def run_historical_clone(
                                     chat_id=dest,
                                     from_chat_id=source,
                                     message_id=msg.id,
-                                    message_thread_id=dest_thread_id
+                                    **({"message_thread_id": dest_thread_id} if dest_thread_id else {})
                                 )
                             except FloodWait as e:
                                 await asyncio.sleep(e.value)
@@ -512,7 +512,7 @@ class AutoForwardEngine:
 
                         # 🔥 TOPIC FILTER
                         if source_thread_id is not None:
-                            if msg.message_thread_id != source_thread_id:
+                            if getattr(msg, "message_thread_id", None) != source_thread_id:
                                 continue
 
                         if getattr(msg, "service", False):
@@ -531,14 +531,14 @@ class AutoForwardEngine:
                                     chat_id=dest,
                                     from_chat_id=source,
                                     message_id=msg.id,
-                                    message_thread_id=dest_thread_id
+                                    **({"message_thread_id": dest_thread_id} if dest_thread_id else {})
                                 )
                             else:
                                 await client.copy_message(
                                     chat_id=dest,
                                     from_chat_id=source,
                                     message_id=msg.id,
-                                    message_thread_id=dest_thread_id
+                                    **({"message_thread_id": dest_thread_id} if dest_thread_id else {})
                                 )
 
                         except ChatWriteForbidden:
