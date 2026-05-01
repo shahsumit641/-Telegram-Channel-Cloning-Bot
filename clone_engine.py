@@ -512,9 +512,17 @@ class AutoForwardEngine:
 
                         # 🔥 TOPIC FILTER
                         if source_thread_id is not None:
-                            if getattr(msg, "message_thread_id", None) != source_thread_id:
-                                continue
-
+                            msg_thread = getattr(msg, "message_thread_id", None)
+                        
+                            # Case 1: real thread_id exists
+                            if msg_thread:
+                                if msg_thread != source_thread_id:
+                                    continue
+                            else:
+                                # Case 2: fallback (use message id comparison range logic)
+                                if msg.id < source_thread_id:
+                                    continue
+                                
                         if getattr(msg, "service", False):
                             continue
 
