@@ -52,7 +52,7 @@ def parse_t_me_c_link(link: str):
 
 async def extract_thread_id(client, chat_id: int, message_id: int):
     msg = await client.get_messages(chat_id, message_id)
-    return msg.message_thread_id
+    return getattr(msg, "message_thread_id", None)
 
 def main_menu_keyboard():
     """Build the interactive main menu."""
