@@ -191,11 +191,9 @@ async def run_historical_clone(
     try:
         first_msg = await client.get_messages(source, 1)
 
-        latest_list = []
-        async for m in client.get_chat_history(source, limit=1):
-            latest_list.append(m)
+        latest_msgs = await client.get_messages(source, limit=1)
+        latest_msg = latest_msgs[0] if latest_msgs else None
 
-        latest_msg = latest_list[0] if latest_list else None
         first_id = first_msg.id if first_msg else 1
         latest_id = latest_msg.id if latest_msg else 0
         
@@ -240,16 +238,19 @@ async def run_historical_clone(
                 continue
             
             for msg in messages:
-                # 🔥 TOPIC FILTER
-                if source_thread_id is not None:
-                    if getattr(msg, "message_thread_id", None) != source_thread_id:
-                        continue
-
+                if not msg or msg.empty:
+                    continue
+                
                 if getattr(msg, "service", False):
                     continue
+                
+                # 🔥 TOPIC FILTER
+                if source_thread_id:
+                    msg_thread = getattr(msg, "message_thread_id", None)
 
-                if msg is None or msg.empty:
-                    continue
+                    if msg_thread is not None and msg_thread != source_thread_id:
+                        continue
+
                 
                 if only_media and not msg.media and not msg.media_group_id:
                     continue
@@ -307,9 +308,13 @@ async def run_historical_clone(
                 batch_count = 0
                 async for msg in client.get_chat_history(source, limit=100, offset_id=offset_id):
 
-                    if source_thread_id is not None:
-                        if getattr(msg, "message_thread_id", None) != source_thread_id:
-                            continue
+                    if source_thread_id:
+                        msg_thread = getattr(msg, "message_thread_id", None)
+
+                        # STRICT filtering ONLY when thread exists
+                        if msg_thread is not None:
+                            if msg_thread != source_thread_id:
+                                continue
 
                     # 🔥 ADD HERE
                     job = await get_user_job(user_id, job_id)
@@ -318,7 +323,7 @@ async def run_historical_clone(
                         return
                     if msg.id <= last_cloned:
                         log.info(f"[User {user_id}] Reached already-cloned msg {msg.id}, stopping")
-                        continue
+                        break
                     
                     if only_media and not msg.media and not msg.media_group_id:
                         continue
@@ -509,25 +514,19 @@ class AutoForwardEngine:
                     seen_media = set()
 
                     for msg in messages:
-
-                        # 🔥 TOPIC FILTER
-                        if source_thread_id is not None:
-                            msg_thread = getattr(msg, "message_thread_id", None)
+                        if not msg or msg.empty:
+                            continue
                         
-                            # Case 1: real thread_id exists
-                            if msg_thread:
-                                if msg_thread != source_thread_id:
-                                    continue
-                            else:
-                                # Case 2: fallback (use message id comparison range logic)
-                                if msg.id < source_thread_id:
-                                    continue
-                                
                         if getattr(msg, "service", False):
                             continue
+                        
+                        # 🔥 TOPIC FILTER
+                        if source_thread_id:
+                            msg_thread = getattr(msg, "message_thread_id", None)
 
-                        if msg is None or msg.empty:
-                            continue
+                            if msg_thread is not None and msg_thread != source_thread_id:
+                                continue
+                                
 
                         try:
                             if msg.media_group_id:
