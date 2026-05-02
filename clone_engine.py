@@ -198,8 +198,10 @@ async def run_historical_clone(
     try:
         first_msg = await client.get_messages(source, 1)
 
-        latest_msgs = await client.get_messages(source, limit=1)
-        latest_msg = latest_msgs[0] if latest_msgs else None
+        latest_msg = None
+        async for m in client.get_chat_history(source, limit=1):
+            latest_msg = m
+            break
 
         first_id = first_msg.id if first_msg else 1
         latest_id = latest_msg.id if latest_msg else 0
@@ -472,9 +474,11 @@ class AutoForwardEngine:
             dest = dest_chat.id
 
             # 🔍 Get latest message
-            latest_msgs = await client.get_messages(source, limit=1)
-            latest = latest_msgs[0] if latest_msgs else None
-
+            latest = None
+            async for m in client.get_chat_history(source, limit=1):
+                latest = m
+                break
+            
             if latest is None or latest.empty:
                 return
 
