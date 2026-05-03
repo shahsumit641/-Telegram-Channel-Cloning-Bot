@@ -41,73 +41,104 @@ async def resolve_chat(client, chat_input):
 
 # ── Rate-limited copy helpers ───────────────────────────
 
-async def _safe_copy(client: Client, from_chat, to_chat, msg_id, dest_thread_id=None, retries=3):
-    from pyrogram.errors import FloodWait, ChatWriteForbidden, ChannelPrivate, PeerIdInvalid
-    
-    for attempt in range(retries):
-        try:
-            kwargs = {}
-            if dest_thread_id:
-                kwargs["message_thread_id"] = dest_thread_id
+async def _safe_copy(client, from_chat, to_chat, msg, dest_thread_id=None):
+    from pyrogram.errors import FloodWait
 
-            return await client.copy_message(
+    try:
+        kwargs = {}
+
+        if dest_thread_id:
+            kwargs["reply_to_message_id"] = dest_thread_id
+
+        if msg.text:
+            return await client.send_message(
                 chat_id=to_chat,
-                from_chat_id=from_chat,
-                message_id=msg_id,
+                text=msg.text,
+                entities=msg.entities,
                 **kwargs
             )
 
-        except FloodWait as e:
-            await asyncio.sleep(e.value + 1)
-
-        except ChatWriteForbidden:
-            log.error(f"Cannot write to {to_chat}")
-            return None
-
-        except (ChannelPrivate, PeerIdInvalid) as e:
-            log.error(f"Channel error: {e}")
-            return None
-
-        except Exception as e:
-            if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)
-            else:
-                log.error(f"Copy failed {msg_id}: {e}")
-                return None
-
-async def _safe_copy_media_group(client: Client, from_chat, to_chat, msg_id, dest_thread_id=None, retries=3):
-    from pyrogram.errors import FloodWait, ChatWriteForbidden, ChannelPrivate, PeerIdInvalid
-    
-    for attempt in range(retries):
-        try:
-            kwargs = {}
-            if dest_thread_id:
-                kwargs["message_thread_id"] = dest_thread_id
-
-            return await client.copy_media_group(
+        elif msg.photo:
+            return await client.send_photo(
                 chat_id=to_chat,
-                from_chat_id=from_chat,
-                message_id=msg_id,
+                photo=msg.photo.file_id,
+                caption=msg.caption or None,
+                caption_entities=msg.caption_entities,
                 **kwargs
             )
 
-        except FloodWait as e:
-            await asyncio.sleep(e.value + 1)
+        elif msg.video:
+            return await client.send_video(
+                chat_id=to_chat,
+                video=msg.video.file_id,
+                caption=msg.caption or None,
+                caption_entities=msg.caption_entities,
+                **kwargs
+            )
 
-        except ChatWriteForbidden:
-            log.error(f"Cannot write to {to_chat}")
+        elif msg.document:
+            return await client.send_document(
+                chat_id=to_chat,
+                document=msg.document.file_id,
+                caption=msg.caption or None,
+                caption_entities=msg.caption_entities,
+                **kwargs
+            )
+
+        elif msg.audio:
+            return await client.send_audio(
+                chat_id=to_chat,
+                audio=msg.audio.file_id,
+                caption=msg.caption or None,
+                caption_entities=msg.caption_entities,
+                **kwargs
+            )
+
+        elif msg.voice:
+            return await client.send_voice(
+                chat_id=to_chat,
+                voice=msg.voice.file_id,
+                caption=msg.caption or None,
+                caption_entities=msg.caption_entities,
+                **kwargs
+            )
+
+        else:
             return None
 
-        except (ChannelPrivate, PeerIdInvalid) as e:
-            log.error(f"Channel error: {e}")
-            return None
+    except FloodWait as e:
+        await asyncio.sleep(e.value + 1)
+        return None
 
-        except Exception as e:
-            if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)
-            else:
-                log.error(f"Media group failed {msg_id}: {e}")
-                return None
+    except Exception as e:
+        log.error(f"Send failed {msg.id}: {e}")
+        return None
+
+async def _safe_copy_media_group(client, to_chat, messages, dest_thread_id=None):
+    from pyrogram.types import InputMediaPhoto, InputMediaVideo
+
+    media = []
+
+    for i, m in enumerate(messages):
+        if m.photo:
+            media.append(InputMediaPhoto(
+                m.photo.file_id,
+                caption=m.caption if i == 0 else None
+            ))
+        elif m.video:
+            media.append(InputMediaVideo(
+                m.video.file_id,
+                caption=m.caption if i == 0 else None
+            ))
+    kwargs = {}
+    if dest_thread_id:
+        kwargs["reply_to_message_id"] = dest_thread_id
+
+    return await client.send_media_group(
+        chat_id=to_chat,
+        media=media,
+        **kwargs
+    )
 
 # ── Historical Clone ────────────────────────────────────
 
@@ -270,9 +301,10 @@ async def run_historical_clone(
                         if msg.media_group_id in seen_media_groups:
                             continue
                         seen_media_groups.add(msg.media_group_id)
-                        await _safe_copy_media_group(client, source, dest, msg.id, dest_thread_id)
+                        group_msgs = await client.get_media_group(source, msg.id)
+                        await _safe_copy_media_group(client, dest, group_msgs, dest_thread_id)
                     else:
-                        await _safe_copy(client, source, dest, msg.id, dest_thread_id)
+                        await _safe_copy(client, source, dest, msg, dest_thread_id)
                     
                     processed += 1
                     
@@ -333,9 +365,10 @@ async def run_historical_clone(
                             if msg.media_group_id in seen_media_groups:
                                 continue
                             seen_media_groups.add(msg.media_group_id)
-                            await _safe_copy_media_group(client, source, dest, msg.id, dest_thread_id)
+                            group_msgs = await client.get_media_group(source, msg.id)
+                            await _safe_copy_media_group(client, dest, group_msgs, dest_thread_id)
                         else:
-                            await _safe_copy(client, source, dest, msg.id, dest_thread_id)
+                            await _safe_copy(client, source, dest, msg, dest_thread_id)
                         
                         processed += 1
                         batch_count += 1
@@ -522,9 +555,10 @@ class AutoForwardEngine:
                                     continue
                                 seen_media.add(msg.media_group_id)
 
-                                await _safe_copy_media_group(client, source, dest, msg.id, dest_thread_id)
+                                group_msgs = await client.get_media_group(source, msg.id)
+                                await _safe_copy_media_group(client, dest, group_msgs, dest_thread_id)
                             else:
-                                await _safe_copy(client, source, dest, msg.id, dest_thread_id)
+                                await _safe_copy(client, source, dest, msg, dest_thread_id)
 
                         except ChatWriteForbidden:
                             log.error(
