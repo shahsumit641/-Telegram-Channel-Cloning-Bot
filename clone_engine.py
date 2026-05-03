@@ -170,24 +170,24 @@ async def run_historical_clone(
         dest = dest_chat.id
 
         label = f"{source_chat.title or source} → {dest_chat.title or dest}"
-    except ChannelPrivate:
+    except ChannelPrivate as e:
         msg = f"Source channel '{source}' is private or bot cannot access it"
-        log.error(f"[User {user_id}] {msg}")
-        await update_job_state(job_id, status="failed")
+        log.error(f"[User {user_id}] Source channel '{source}' is private")
+        log.warning(f"Continuing despite error: {e}")
         if on_complete:
             await on_complete(user_id, job_id, 0, msg)
         return
-    except PeerIdInvalid:
+    except PeerIdInvalid as e:
         msg = f"Cannot find channel '{source}'. Check the username/ID."
-        log.error(f"[User {user_id}] {msg}")
-        await update_job_state(job_id, status="failed")
+        log.error(f"[User {user_id}] Invalid channel '{source}'")
+        log.warning(f"Continuing despite error: {e}")
         if on_complete:
             await on_complete(user_id, job_id, 0, msg)
         return
     except Exception as e:
         msg = f"Error accessing channels: {e}"
-        log.error(f"[User {user_id}] {msg}")
-        await update_job_state(job_id, status="failed")
+        log.error(f"[User {user_id}] Source channel '{source}' is private")
+        log.warning(f"Continuing despite error: {e}")
         if on_complete:
             await on_complete(user_id, job_id, 0, msg)
         return    
@@ -213,8 +213,8 @@ async def run_historical_clone(
                 await on_complete(user_id, job_id, 0)
             return
     except Exception as e:
-        log.error(f"[User {user_id}] Range fetch failed: {e}")
-        await update_job_state(job_id, status="failed")
+        log.error(f"[User {user_id}] Source channel '{source}' is private")
+        log.warning(f"Continuing despite error: {e}")
         if on_complete:
             await on_complete(user_id, job_id, total_cloned, str(e))
         return
@@ -237,7 +237,11 @@ async def run_historical_clone(
             msg_ids = list(range(current_id, batch_end + 1))
             
             try:
-                messages = await client.get_messages(source, msg_ids)
+                messages = []
+                async for m in client.get_chat_history(source, limit=100, offset_id=batch_end):
+                    if m.id < current_id:
+                        break
+                    messages.append(m)
             except FloodWait as e:
                 await asyncio.sleep(e.value + 2)
                 continue
@@ -257,12 +261,9 @@ async def run_historical_clone(
                 if source_thread_id:
                     msg_thread = getattr(msg, "message_thread_id", None)
 
+                    # Only filter when thread exists
                     if msg_thread is not None and msg_thread != source_thread_id:
                         continue
-
-                
-                if only_media and not msg.media and not msg.media_group_id:
-                    continue
                 
                 try:
                     if msg.media_group_id:
@@ -312,11 +313,9 @@ async def run_historical_clone(
                     if source_thread_id:
                         msg_thread = getattr(msg, "message_thread_id", None)
 
-                        # STRICT filtering ONLY when thread exists
-                        if msg_thread is not None:
-                            if msg_thread != source_thread_id:
-                                continue
-
+                        if msg_thread is not None and msg_thread != source_thread_id:
+                            continue
+                        
                     # 🔥 ADD HERE
                     job = await get_user_job(user_id, job_id)
                     if not job or job.get("status") == "deleted":
