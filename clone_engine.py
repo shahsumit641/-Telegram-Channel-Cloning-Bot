@@ -43,6 +43,7 @@ async def resolve_chat(client, chat_input):
 
 async def _safe_copy(client, from_chat, to_chat, msg, dest_thread_id=None):
     from pyrogram.errors import FloodWait
+    
 
     try:
         kwargs = {}
@@ -102,12 +103,15 @@ async def _safe_copy(client, from_chat, to_chat, msg, dest_thread_id=None):
                 caption_entities=msg.caption_entities,
                 **kwargs
             )
+        
 
         else:
             return None
 
     except FloodWait as e:
-        await asyncio.sleep(e.value + 1)
+        wait_time = e.value + 2
+        log.warning(f"FloodWait: sleeping {wait_time}s (SAFE MODE)")
+        await asyncio.sleep(wait_time)
         return None
 
     except Exception as e:
@@ -456,8 +460,12 @@ class AutoForwardEngine:
     
     async def _check_all(self):
         """Check all active auto-forward configs for new messages."""
+        
         try:
             configs = await get_active_auto_forwards()
+            if not configs:
+                log.info("No active auto-forwards")
+                return
         except Exception as e:
             log.error(f"Failed to fetch auto-forwards from database: {e}")
             return
@@ -475,6 +483,11 @@ class AutoForwardEngine:
         """Check a single auto-forward config for new messages."""
         from pyrogram.errors import ChatWriteForbidden, ChannelPrivate
         from pyrogram.types import Message
+        
+        cfg_check = await get_auto_forward(cfg["id"])
+        if not cfg_check:
+            log.info(f"Auto-forward {cfg['id']} removed, stopping")
+            return
 
         user_id = cfg["user_id"]
         source = cfg["source_channel"]
@@ -496,7 +509,7 @@ class AutoForwardEngine:
 
         try:
             # 🔥 CRITICAL FIX: resolve chats (works for private channels + IDs)
-            async for _ in client.get_dialogs(limit=50):
+            async for _ in client.get_dialogs(limit=100):
                 break
 
             source_chat = await resolve_chat(client, source)
