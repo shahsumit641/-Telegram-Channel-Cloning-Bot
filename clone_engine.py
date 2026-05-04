@@ -33,7 +33,7 @@ async def resolve_chat(client, chat_input):
         pass
 
     # 2. Fallback: scan dialogs (required for private IDs)
-    async for dialog in client.get_dialogs():
+    async for dialog in client.get_dialogs(limit=200):
         if str(dialog.chat.id) == str(chat_input):
             return dialog.chat
 
