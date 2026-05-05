@@ -49,15 +49,28 @@ def parse_t_me_c_link(link: str):
 
     return chat_id, message_id
 
+def parse_telegram_link(text):
+    match = re.search(r"/c/(\d+)/(\d+)", text)
+    if match:
+        chat = int(match.group(1))
+        msg_id = int(match.group(2))
+        return -1000000000000 + chat, msg_id
+    return None, None
+
 
 async def extract_thread_id(client, chat_id: int, message_id: int):
+    # 🔥 FORCE RESOLVE CHAT FIRST (FIX)
+    try:
+        await client.get_chat(chat_id)
+    except Exception:
+        pass
+
     msg = await client.get_messages(chat_id, message_id)
 
     thread_id = getattr(msg, "message_thread_id", None)
 
-    # 🔥 fallback (CRITICAL FIX)
+    # fallback (important)
     if thread_id is None:
-        # treat message_id as thread_id for topics
         return msg.id
 
     return thread_id
